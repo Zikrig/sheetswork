@@ -231,20 +231,42 @@ def execute_requests_with_retry(sheet, requests):
 async def ensure_sheet_exists(client, target_date):
     try:
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
-        sheet_name = get_sheet_name(target_date)
+        base_sheet_name = get_sheet_name(target_date)
         
+        # Проверяем существование листа без конфликтного суффикса
         try:
-            # Проверяем существование листа
-            sheet = spreadsheet.worksheet(sheet_name)
-            logger.info(f"Лист {sheet_name} уже существует")
+            # Ищем лист по базовому имени
+            sheet = spreadsheet.worksheet(base_sheet_name)
+            logger.info(f"Лист {base_sheet_name} уже существует")
             return sheet
         except gspread.exceptions.WorksheetNotFound:
-            # Создаем новый лист если не существует
-            sheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=100)
-            logger.info(f"Создан новый лист: {sheet_name}")
+            pass
+        
+        # Проверяем существование листов с конфликтными именами
+        all_sheets = spreadsheet.worksheets()
+        pattern = re.compile(rf"^{re.escape(base_sheet_name)}_conflict\d+$")
+        
+        for sheet in all_sheets:
+            if pattern.match(sheet.title):
+                logger.info(f"Найден конфликтный лист: {sheet.title}")
+                # Переименовываем конфликтный лист в правильное имя
+                try:
+                    sheet.update_title(base_sheet_name)
+                    logger.info(f"Лист переименован в {base_sheet_name}")
+                    return sheet
+                except Exception as e:
+                    logger.error(f"Ошибка при переименовании листа: {e}")
+        
+        # Если не нашли ни базового, ни конфликтного листа - создаем новый
+        try:
+            sheet = spreadsheet.add_worksheet(title=base_sheet_name, rows=1000, cols=100)
+            logger.info(f"Создан новый лист: {base_sheet_name}")
             create_sheet_structure(sheet, CHANNELS, target_date)
             return sheet
-            
+        except Exception as e:
+            logger.error(f"Ошибка при создании листа: {e}")
+            raise
+
     except Exception as e:
         logger.error(f"Ошибка при работе с листом: {e}")
         raise
@@ -299,7 +321,6 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         # Цвета
         colors = {
             "красный": {"red": 1, "green": 0, "blue": 0},
-            "зеленый": {"red": 0, "green": 1, "blue": 0},
             "желтый": {"red": 1, "green": 1, "blue": 0},
             "розовый": {"red": 1, "green": 0, "blue": 1},
             "голубой": {"red": 0, "green": 1, "blue": 1}
@@ -407,9 +428,11 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
                 # Получаем значение из кэша
                 current_value = cell_values.get((row, col), "")
                 
-                # Заменяем @@@ на время в тексте
-                if '@@@' in text:
-                    formatted_text = text.replace('@@@', time_str)
+                # Заменяем @ на время в тексте
+                if '@' in text:
+                    import html
+                    text = html.unescape(text)
+                    formatted_text = text.replace('@', time_str)
                 else:
                     formatted_text = text
                 
