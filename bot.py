@@ -31,27 +31,100 @@ async def answer_callback(callback: types.CallbackQuery, text: str):
         logger.warning(f"Не удалось ответить на callback: {e}")
 
 
-def get_month_keyboard():
-    builder = InlineKeyboardBuilder()
-    today = datetime.now()
+
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+# Добавляем в начало файла
+MONTH_BUTTONS = [
+    [KeyboardButton(text="Текущий месяц"), KeyboardButton(text="Следующий месяц")],
+    [KeyboardButton(text="Данные (клавиатура)")]
+]
+
+# Обновляем функцию start
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    # Отправляем приветственное сообщение с инлайн-клавиатурой
+    await message.answer(
+        "Добро пожаловать! Выберите действие:",
+        reply_markup=get_month_keyboard()  # Инлайн-клавиатура
+    )
     
+    # Отправляем второе сообщение с обычной клавиатурой
+    await message.answer(
+        "Или используйте кнопки ниже:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=MONTH_BUTTONS,
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+    )
+
+# Обработчик для обычной клавиатуры
+@dp.message(F.text.in_(["Текущий месяц", "Следующий месяц", "Данные (клавиатура)"]))
+async def handle_keyboard(message: types.Message):
+    if message.text == "Данные (клавиатура)":
+        await view_data_handler_keyboard(message)
+    else:
+        today = datetime.now()
+        target_date = today if message.text == "Текущий месяц" else today + relativedelta(months=1)
+        
+        client = await setup_google_sheets()
+        await ensure_sheet_exists(client, target_date)
+        
+        user_states[message.from_user.id] = {
+            'current_month': target_date
+        }
+        
+        await message.answer(
+            f"✅ Лист для {MONTH_NAMES[target_date.month]} {target_date.year} готов!\n\n"
+            "Теперь отправьте данные для заполнения в формате:\n\n"
+            "<b>Текст сообщения</b>\n"
+            "<b>Число (день месяца)</b>\n"
+            "<b>Цвет (красный/зеленый/желтый/розовый/голубой)</b>\n"
+            "<b>Канал 1 9:05</b>\n"
+            "<b>Канал 2 10:30</b>",
+            parse_mode="HTML"
+        )
+
+# Новая версия обработчика для кнопки "Данные" (инлайн)
+@dp.callback_query(F.data == "view_data")
+async def view_data_handler(callback: types.CallbackQuery):
+    await answer_callback(callback, "Просмотр данных")
+    await callback.message.answer(  # Отправляем новое сообщение
+        "Выберите месяц для просмотра данных:",
+        reply_markup=get_data_keyboard()
+    )
+
+# Обработчик для кнопки "Данные" (обычная клавиатура)
+async def view_data_handler_keyboard(message: types.Message):
+    await message.answer(
+        "Выберите месяц для просмотра данных:",
+        reply_markup=get_data_keyboard()
+    )
+
+# Обновляем функцию get_data_keyboard
+def get_data_keyboard(target_date=None):
+    builder = InlineKeyboardBuilder()
+    
+    # Кнопки месяцев
+    today = datetime.now()
     for i in range(3):
         month_date = today + relativedelta(months=i)
         builder.add(InlineKeyboardButton(
             text=f"{MONTH_NAMES[month_date.month]} {month_date.year}",
-            callback_data=f"month_{month_date.month}_{month_date.year}"
+            callback_data=f"data_month_{month_date.month}_{month_date.year}"
         ))
     
-    builder.adjust(3)
+    # Кнопки дней (31 кнопка)
+    if target_date:
+        for day in range(1, 32):
+            builder.add(InlineKeyboardButton(
+                text=str(day),
+                callback_data=f"data_day_{target_date.month}_{target_date.year}_{day}"
+            ))
+    
+    builder.adjust(3, *[7]*5)  # 3 месяца, затем по 7 дней в строке
     return builder.as_markup()
-
-
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    await message.answer(
-        "Выберите месяц для управления таблицами:",
-        reply_markup=get_month_keyboard()
-    )
 
 
 @dp.message(Command("cancel"))
@@ -65,11 +138,134 @@ async def cancel_command(message: types.Message):
     await start(message)
 
 
+# В обработчике callback_query
+@dp.callback_query(F.data.startswith("data_month_"))
+async def process_data_month_selection(callback: types.CallbackQuery):
+    try:
+        await answer_callback(callback, "Выбор месяца для просмотра")
+        
+        _, _, month, year = callback.data.split('_')
+        target_date = datetime(int(year), int(month), 1)
+        
+        # Сохраняем выбранный месяц для пользователя
+        user_states[callback.from_user.id] = {
+            'mode': 'data_view',
+            'target_month': target_date
+        }
+        
+        await callback.message.edit_text(
+            f"Выберите день в {MONTH_NAMES[target_date.month]} {target_date.year}:",
+            reply_markup=get_data_keyboard(target_date)
+        )
+            
+    except Exception as e:
+        logger.error(f"Ошибка в process_data_month_selection: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.callback_query(F.data.startswith("data_day_"))
+async def process_data_day_selection(callback: types.CallbackQuery):
+    try:
+        await answer_callback(callback, "Загрузка данных...")
+        
+        _, _, month, year, day = callback.data.split('_')
+        target_date = datetime(int(year), int(month), int(day))
+        user_id = callback.from_user.id
+        
+        if user_id not in user_states or 'target_month' not in user_states[user_id]:
+            await callback.message.answer("Сессия устарела. Начните заново с /start")
+            return
+        
+        # Получаем данные из таблицы
+        client = await setup_google_sheets()
+        report = await get_day_data(client, target_date)
+        
+        await callback.message.edit_text(
+            f"Данные за {day}.{month}.{year}:\n\n{report}\n\nВыберите другую дату:",
+            reply_markup=get_data_keyboard(user_states[user_id]['target_month'])
+        )
+            
+    except Exception as e:
+        logger.error(f"Ошибка в process_data_day_selection: {e}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+
+
+async def get_day_data(client, target_date):
+    try:
+        sheet_name = get_sheet_name(target_date)
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        sheet = spreadsheet.worksheet(sheet_name)
+        
+        report_lines = []
+        
+        # Читаем все данные листа одним запросом
+        try:
+            all_data = sheet.get_all_values()
+        except Exception as e:
+            logger.error(f"Ошибка чтения данных: {e}")
+            return f"Ошибка при получении данных: {str(e)}"
+        
+        # Получаем конфигурацию таблицы
+        table_config = TABLE_CONFIG
+        table_height = table_config['table_height']
+        table_width = table_config['table_width']
+        v_spacing = table_config['v_spacing']
+        h_spacing = table_config['h_spacing']
+        tables_per_row = table_config['tables_per_row']
+        
+        for channel_idx, channel_name in enumerate(CHANNELS):
+            # Определяем положение таблицы канала
+            row_idx = channel_idx // tables_per_row
+            col_idx = channel_idx % tables_per_row
+            
+            # Рассчитываем начальную позицию таблицы
+            start_row = 1 + row_idx * (table_height + v_spacing)
+            start_col = 1 + col_idx * (table_width + h_spacing)
+            
+            # Рассчитываем позицию дня в таблице
+            day_row = start_row + 1 + target_date.day  # +1 пропускаем заголовок таблицы
+            
+            # Проверяем границы данных
+            if day_row - 1 >= len(all_data):
+                # Если строка за пределами данных - все смены свободны
+                status = "9 ⭕️ 12 ⭕️ 15 ⭕️ 18 ⭕️"
+            else:
+                row_data = all_data[day_row - 1]
+                status_parts = []
+                
+                # Времена смен и соответствующие колонки
+                shifts = [
+                    ("9", start_col + 2),   # Утро (№1)
+                    ("12", start_col + 3),  # Полдень (№2)
+                    ("15", start_col + 4),  # День (№3)
+                    ("18", start_col + 5)   # Вечер (№4)
+                ]
+                
+                for time, col in shifts:
+                    if col - 1 < len(row_data):
+                        cell_value = row_data[col - 1]
+                        # Проверяем, заполнена ли ячейка
+                        if cell_value and cell_value.strip():
+                            status_parts.append(f"{time} ")
+                        else:
+                            status_parts.append(f"{time} ⭕️")
+                    else:
+                        status_parts.append(f"{time} ⭕️")
+                
+                status = " ".join(status_parts)
+            
+            report_lines.append(f"{channel_name} {status}")
+        
+        return "\n".join(report_lines)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении данных: {e}")
+        return f"Ошибка при получении данных: {str(e)}"
+    
+
 def get_month_keyboard():
     builder = InlineKeyboardBuilder()
     today = datetime.now()
     
-    # Всегда показываем 3 месяца: текущий + следующие два
     for i in range(3):
         month_date = today + relativedelta(months=i)
         builder.add(InlineKeyboardButton(
@@ -77,8 +273,23 @@ def get_month_keyboard():
             callback_data=f"month_{month_date.month}_{month_date.year}"
         ))
     
-    builder.adjust(3)
+    # Добавляем кнопку "Данные"
+    builder.add(InlineKeyboardButton(
+        text="📊 Данные",
+        callback_data="view_data"
+    ))
+    
+    builder.adjust(3, 1)
     return builder.as_markup()
+
+# Обработчик для кнопки "Данные"
+@dp.callback_query(F.data == "view_data")
+async def view_data_handler(callback: types.CallbackQuery):
+    await answer_callback(callback, "Просмотр данных")
+    await callback.message.edit_text(
+        "Выберите месяц для просмотра данных:",
+        reply_markup=get_data_keyboard()
+    )
 
 
 @dp.callback_query(F.data.startswith("month_"))

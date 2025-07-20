@@ -7,6 +7,7 @@ from googleapiclient.errors import HttpError
 from dateutil.relativedelta import relativedelta
 import gspread
 from google.oauth2.service_account import Credentials
+import asyncio
 import re
 import os
 
@@ -288,6 +289,7 @@ def get_sheet_name(date):
     """Генерирует название листа на основе даты"""
     return f"{MONTH_NAMES[date.month]}{date.year}"
 
+
 async def update_table_cells(client, target_date, day, color_name, text, channels_data):
     try:
         sheet_name = get_sheet_name(target_date)
@@ -317,6 +319,9 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         # Для сбора результатов
         report_data = []
         requests = []
+        
+        # Собираем все ячейки для чтения
+        read_cells = {}
         
         for data in channels_data:
             channel_name = data['channel']
@@ -355,59 +360,88 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
             }
             col = start_col + shift_columns.get(shift, 5)
             
-            # Получаем текущее значение ячейки
-            try:
-                cell = sheet.cell(row, col)
-                current_value = cell.value or ""
-            except Exception as e:
-                logger.error(f"Ошибка чтения ячейки: {e}")
-                entry["status"] = "error"
-                entry["message"] = "Ошибка чтения ячейки"
-                report_data.append(entry)
-                continue
-                
-            # Проверяем возможность записи
-            new_text = text
-            if current_value.strip():
-                if color_name == "голубой":
-                    new_text = f"{current_value}, {text}"
-                    entry["status"] = "success"
-                    entry["message"] = "Текст дополнен"
-                else:
-                    entry["status"] = "skip"
-                    entry["message"] = "Ячейка занята (не голубой)"
-                    report_data.append(entry)
-                    continue
-            else:
-                entry["status"] = "success"
-                entry["message"] = "Текст записан"
-            
-            # Формируем запрос на обновление
-            requests.append({
-                'updateCells': {
-                    'range': {
-                        'sheetId': sheet.id,
-                        'startRowIndex': row - 1,
-                        'endRowIndex': row,
-                        'startColumnIndex': col - 1,
-                        'endColumnIndex': col
-                    },
-                    'rows': [{
-                        'values': [{
-                            'userEnteredValue': {'stringValue': new_text},
-                            'userEnteredFormat': {'backgroundColor': color}
-                        }]
-                    }],
-                    'fields': 'userEnteredValue,userEnteredFormat.backgroundColor'
-                }
+            # Сохраняем для batch-чтения
+            key = (row, col)
+            if key not in read_cells:
+                read_cells[key] = []
+            read_cells[key].append({
+                'entry': entry,
+                'channel_name': channel_name,
+                'time_str': time_str
             })
-            report_data.append(entry)
         
-        # Отправляем запросы
+        # Читаем все ячейки одним запросом
+        cell_values = {}
+        if read_cells:
+            try:
+                # Получаем список всех ячеек для чтения
+                cell_list = sheet.range(
+                    f"A1:{gspread.utils.rowcol_to_a1(max(row for row, _ in read_cells.keys()), max(col for _, col in read_cells.keys()))}"
+                )
+                
+                # Создаем словарь значений по координатам
+                for cell in cell_list:
+                    cell_values[(cell.row, cell.col)] = cell.value
+                    
+            except Exception as e:
+                logger.error(f"Ошибка чтения ячеек: {e}")
+                for key, items in read_cells.items():
+                    for item in items:
+                        item['entry']['status'] = "error"
+                        item['entry']['message'] = "Ошибка чтения ячейки"
+                        report_data.append(item['entry'])
+        
+        # Обрабатываем ячейки
+        for (row, col), items in read_cells.items():
+            for item in items:
+                entry = item['entry']
+                
+                # Получаем значение из кэша
+                current_value = cell_values.get((row, col), "")
+                
+                # Проверяем возможность записи
+                new_text = text
+                if current_value and str(current_value).strip():
+                    if color_name == "голубой":
+                        new_text = f"{current_value}, {text}"
+                        entry["status"] = "success"
+                        entry["message"] = "Текст дополнен"
+                    else:
+                        entry["status"] = "skip"
+                        entry["message"] = "Ячейка занята (не голубой)"
+                        report_data.append(entry)
+                        continue
+                else:
+                    entry["status"] = "success"
+                    entry["message"] = "Текст записан"
+                
+                # Формируем запрос на обновление
+                requests.append({
+                    'updateCells': {
+                        'range': {
+                            'sheetId': sheet.id,
+                            'startRowIndex': row - 1,
+                            'endRowIndex': row,
+                            'startColumnIndex': col - 1,
+                            'endColumnIndex': col
+                        },
+                        'rows': [{
+                            'values': [{
+                                'userEnteredValue': {'stringValue': new_text},
+                                'userEnteredFormat': {'backgroundColor': color}
+                            }]
+                        }],
+                        'fields': 'userEnteredValue,userEnteredFormat.backgroundColor'
+                    }
+                })
+                report_data.append(entry)
+        
+        # Отправляем запросы с задержкой
         if requests:
-            for i in range(0, len(requests), 50):
-                batch = requests[i:i+50]
+            for i in range(0, len(requests), 10):  # Разбиваем на пакеты по 10
+                batch = requests[i:i+10]
                 sheet.spreadsheet.batch_update({'requests': batch})
+                await asyncio.sleep(1)  # Задержка 1 сек между пакетами
             
         # Формируем отчет
         success_messages = []
