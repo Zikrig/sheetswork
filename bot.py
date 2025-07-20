@@ -157,6 +157,11 @@ async def handle_keyboard(message: types.Message):
             "15\n"
             "голубой\n"
             "МАСТЕРСКАЯ 9:05\n"
+            "Канал 2 10:30</code>\n\n"
+            "Пример отмены:\n"
+            "<code>Отмена\n"
+            "15\n"
+            "МАСТЕРСКАЯ 9:05\n"
             "Канал 2 10:30</code>\n\n",
             parse_mode="HTML"
         )
