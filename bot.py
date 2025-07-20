@@ -222,40 +222,59 @@ async def get_day_data(client, target_date):
             start_col = 1 + col_idx * (table_width + h_spacing)
             
             # Рассчитываем позицию дня в таблице
-            day_row = start_row + 1 + target_date.day  # +1 пропускаем заголовок таблицы
+            day_row = start_row + 1 + target_date.day
             
             # Проверяем границы данных
             if day_row - 1 >= len(all_data):
-                # Если строка за пределами данных - все смены свободны
-                status = "9 ⭕️ 12 ⭕️ 15 ⭕️ 18 ⭕️"
-            else:
-                row_data = all_data[day_row - 1]
-                status_parts = []
-                
-                # Времена смен и соответствующие колонки
-                shifts = [
-                    ("9", start_col + 2),   # Утро (№1)
-                    ("12", start_col + 3),  # Полдень (№2)
-                    ("15", start_col + 4),  # День (№3)
-                    ("18", start_col + 5)   # Вечер (№4)
-                ]
-                
-                for time, col in shifts:
-                    if col - 1 < len(row_data):
-                        cell_value = row_data[col - 1]
-                        # Проверяем, заполнена ли ячейка
-                        if cell_value and cell_value.strip():
-                            status_parts.append(f"")
-                        else:
-                            status_parts.append(f"{time} ⭕️")
-                    else:
-                        status_parts.append(f"{time} ⭕️")
-                
-                status = " ".join(status_parts)
+                continue
             
-            report_lines.append(f"{channel_name} {status}")
+            row_data = all_data[day_row - 1]
+            
+            # Проверяем состояние слотов
+            slots = []
+            slot_status = {}
+            
+            # Времена смен и соответствующие колонки
+            shifts = [
+                ("9", start_col + 2),   # Утро (№1)
+                ("12", start_col + 3),  # Полдень (№2)
+                ("15", start_col + 4),  # День (№3)
+                ("18", start_col + 5)   # Вечер (№4)
+            ]
+            
+            # Проверяем занятость слотов
+            for time, col in shifts:
+                if col - 1 < len(row_data):
+                    cell_value = row_data[col - 1]
+                    # Проверяем, заполнена ли ячейка
+                    is_free = not (cell_value and cell_value.strip())
+                    slot_status[time] = is_free
+                else:
+                    slot_status[time] = False  # Считаем занятым, если ячейка за пределами данных
+            
+            # Формируем строку для канала
+            channel_line = [channel_name]
+            free_slots_count = 0
+            
+            # Обрабатываем слоты 9, 12, 15
+            for time in ["9", "12", "15"]:
+                if slot_status[time]:
+                    channel_line.append(time)
+                    free_slots_count += 1
+            
+            # Добавляем кружки для свободных слотов (только для 9,12,15)
+            if free_slots_count > 0:
+                channel_line.append("⭕️" * free_slots_count)
+            
+            # Обрабатываем слот 18 отдельно
+            if slot_status["18"]:
+                channel_line.append("18")
+            
+            # Если есть хотя бы один свободный слот (9,12,15 или 18), добавляем канал в отчет
+            if len(channel_line) > 1:
+                report_lines.append(" ".join(channel_line))
         
-        return "\n".join(report_lines)
+        return "\n".join(report_lines) if report_lines else "Все каналы заняты"
         
     except Exception as e:
         logger.error(f"Ошибка при получении данных: {e}")

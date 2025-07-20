@@ -334,6 +334,13 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
                 "message": ""
             }
             
+            # Проверяем наличие времени
+            if not time_str or time_str.strip() == "":
+                entry["status"] = "error"
+                entry["message"] = "Не указано время для канала"
+                report_data.append(entry)
+                continue
+            
             try:
                 channel_idx = CHANNELS.index(channel_name)
             except ValueError:
@@ -395,15 +402,21 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         for (row, col), items in read_cells.items():
             for item in items:
                 entry = item['entry']
+                time_str = item['time_str']
                 
                 # Получаем значение из кэша
                 current_value = cell_values.get((row, col), "")
                 
+                # Заменяем @@@ на время в тексте
+                if '@@@' in text:
+                    formatted_text = text.replace('@@@', time_str)
+                else:
+                    formatted_text = text
+                
                 # Проверяем возможность записи
-                new_text = text
                 if current_value and str(current_value).strip():
                     if color_name == "голубой":
-                        new_text = f"{current_value}, {text}"
+                        new_text = f"{current_value}, {formatted_text}"
                         entry["status"] = "success"
                         entry["message"] = "Текст дополнен"
                     else:
@@ -412,6 +425,7 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
                         report_data.append(entry)
                         continue
                 else:
+                    new_text = formatted_text
                     entry["status"] = "success"
                     entry["message"] = "Текст записан"
                 
