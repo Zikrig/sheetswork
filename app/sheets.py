@@ -10,6 +10,7 @@ from google.oauth2.service_account import Credentials
 import asyncio
 import re
 import os
+import html
 
 from config import *
 
@@ -430,7 +431,6 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
                 
                 # Заменяем @ на время в тексте
                 if '@' in text:
-                    import html
                     text = html.unescape(text)
                     formatted_text = text.replace('@', time_str)
                 else:
@@ -486,14 +486,28 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         error_messages = []
         
         for entry in report_data:
-            channel_info = f"{entry['channel']} ({entry['time']})"
-            if entry["status"] == "success":
-                success_messages.append(f"✓ {channel_info}: {entry['message']}")
-            elif entry["status"] == "skip":
-                skip_messages.append(f"✗ {channel_info}: {entry['message']}")
-            elif entry["status"] == "error":
-                error_messages.append(f"⚠ {channel_info}: {entry['message']}")
+            channel_name = entry['channel']
+            time_str = entry['time']
+            
+            # Экранируем специальные символы
+            channel_name_escaped = html.escape(channel_name)
+            time_str_escaped = html.escape(time_str)
+            
+            channel_link = CHANNELS_DICT.get(channel_name)
+            
+            if channel_link:
+                channel_info = f"<a href='{channel_link}'>{channel_name_escaped}</a> ({time_str_escaped})"
+            else:
+                channel_info = f"{channel_name_escaped} ({time_str_escaped})"
                 
+            if entry["status"] == "success":
+                success_messages.append(f"{channel_info}: {entry['message']}")
+            elif entry["status"] == "skip":
+                skip_messages.append(f"{channel_info}: {entry['message']}")
+            elif entry["status"] == "error":
+                error_messages.append(f"{channel_info}: {entry['message']}")
+        
+
         report = ""
         if success_messages:
             report += "✅ Успешно:\n" + "\n".join(success_messages) + "\n\n"
@@ -603,11 +617,19 @@ async def cancel_table_cells(client, target_date, day, channels_data):
         error_messages = []
         
         for entry in report_data:
-            channel_info = f"{entry['channel']} ({entry['time']})"
-            if entry["status"] == "success":
-                success_messages.append(f"✓ {channel_info}: {entry['message']}")
-            elif entry["status"] == "error":
-                error_messages.append(f"⚠ {channel_info}: {entry['message']}")
+            channel_name = entry['channel']
+            time_str = entry['time']
+            
+            # Экранируем специальные символы
+            channel_name_escaped = html.escape(channel_name)
+            time_str_escaped = html.escape(time_str)
+            
+            channel_link = CHANNELS_DICT.get(channel_name)
+            
+            if channel_link:
+                channel_info = f"<a href='{channel_link}'>{channel_name_escaped}</a> ({time_str_escaped})"
+            else:
+                channel_info = f"{channel_name_escaped} ({time_str_escaped})"
                 
         report = ""
         if success_messages:

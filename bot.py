@@ -1,5 +1,6 @@
 #bot
 
+import html
 import logging
 import os
 from aiogram import Bot, Dispatcher, types, F
@@ -89,21 +90,7 @@ async def handle_keyboard(message: types.Message):
             "15\n"
             "голубой\n"
             "МАСТЕРСКАЯ 9:05\n"
-            "Канал 2 10:30</code>\n\n"
-            "<b>Для отмены записи:</b>\n"
-            "<b>Число (день месяца)</b>\n"
-            "<b>Отмена</b>\n"
-            "<b>Канал 1 9:05</b>\n"
-            "<b>Канал 2 10:30</b>\n\n"
-            "Пример отмены:\n"
-            "<code>22\n"
-            "Отмена\n"
-            "Анатомический театр 10:30\n"
-            "C h o p - C h o p 12:30</code>\n\n"
-            "<i>При отмене:</i>\n"
-            "- Указанные временные слоты будут очищены\n"
-            "- Цвет ячеек станет белым\n"
-            "- Можно отменить сразу несколько записей",
+            "Канал 2 10:30</code>\n\n",
             parse_mode="HTML"
         )
 
@@ -200,10 +187,13 @@ async def process_data_day_selection(callback: types.CallbackQuery):
         client = await setup_google_sheets()
         report = await get_day_data(client, target_date)
         
+        # Разрешаем HTML-разметку в сообщении
         await callback.message.edit_text(
             f"Данные за {day}.{month}.{year}:\n\n{report}\n\nВыберите другую дату:",
-            reply_markup=get_data_keyboard(user_states[user_id]['target_month'])
+            reply_markup=get_data_keyboard(user_states[user_id]['target_month']),
+            parse_mode="HTML"  # Добавляем поддержку HTML
         )
+        
             
     except Exception as e:
         logger.error(f"Ошибка в process_data_day_selection: {e}")
@@ -273,9 +263,19 @@ async def get_day_data(client, target_date):
                 else:
                     slot_status[time] = False  # Считаем занятым, если ячейка за пределами данных
             
+
             # Формируем строку для канала
-            channel_line = [channel_name]
+            channel_line = []
             free_slots_count = 0
+        
+            # Формируем строку для канала с возможной ссылкой
+            channel_link = CHANNELS_DICT.get(channel_name)
+            if channel_link:
+                # Экранируем название для безопасного использования в HTML
+                escaped_name = html.escape(channel_name)
+                channel_line = [f'<a href="{channel_link}">{escaped_name}</a>']
+            else:
+                channel_line = [channel_name]
             
             # Обрабатываем слоты 9, 12, 15
             for time in ["9", "12", "15"]:
@@ -362,21 +362,7 @@ async def process_month_selection(callback: types.CallbackQuery):
             "15\n"
             "голубой\n"
             "МАСТЕРСКАЯ 9:05\n"
-            "Канал 2 10:30</code>\n\n"
-            "<b>Для отмены записи:</b>\n"
-            "<b>Число (день месяца)</b>\n"
-            "<b>Отмена</b>\n"
-            "<b>Канал 1 9:05</b>\n"
-            "<b>Канал 2 10:30</b>\n\n"
-            "Пример отмены:\n"
-            "<code>22\n"
-            "Отмена\n"
-            "Анатомический театр 10:30\n"
-            "C h o p - C h o p 12:30</code>\n\n"
-            "<i>При отмене:</i>\n"
-            "- Указанные временные слоты будут очищены\n"
-            "- Цвет ячеек станет белым\n"
-            "- Можно отменить сразу несколько записей",
+            "Канал 2 10:30</code>\n\n",
             parse_mode="HTML"
         )
             
@@ -401,106 +387,61 @@ async def handle_data_input(message: types.Message):
     try:
         lines = [line.strip() for line in message.text.split('\n') if line.strip()]
         
-        # Режим отмены записи
-        if len(lines) >= 2 and lines[1].lower() == "отмена":
-            if len(lines) < 3:
-                raise ValueError("Для отмены укажите день, 'отмена' и список каналов с временем")
-            
-            day = int(lines[0])
-            channels_data = []
-            
-            # Парсим данные каналов
-            for data in lines[2:]:
-                parts = data.rsplit(' ', 1)
-                if len(parts) != 2:
-                    raise ValueError(f"Неверный формат: {data}")
-                
-                channel_name = parts[0].strip()
-                time_str = parts[1]
-                
-                # Проверка формата времени
-                if not re.match(r'^\d{1,2}:\d{2}$', time_str):
-                    raise ValueError(f"Неверный формат времени: {time_str}")
-                
-                channels_data.append({
-                    'channel': channel_name,
-                    'time': time_str
-                })
-            
-            current_month = user_states[user_id]['current_month']
-            client = await setup_google_sheets()
-            
-            # Отменяем записи
-            report = await cancel_table_cells(
-                client, 
-                current_month, 
-                day, 
-                channels_data
-            )
-            
-            # После обработки предлагаем выбрать месяц снова
-            user_states[user_id].pop('current_month', None)
-            await message.answer(
-                f"{report}\n\nВыберите месяц для следующей операции:",
-                reply_markup=get_month_keyboard()
-            )
+        if len(lines) < 4:
+            raise ValueError("Сообщение должно содержать минимум 4 строки")
         
-        # Стандартный режим записи
-        else:
-            if len(lines) < 4:
-                raise ValueError("Сообщение должно содержать минимум 4 строки")
-            
-            # Парсим данные
-            text = lines[0]
-            day = int(lines[1])
-            color = lines[2].lower()
-            channels_data = []
-            
-            for data in lines[3:]:
-                parts = data.rsplit(' ', 1)
-                if len(parts) != 2:
-                    raise ValueError(f"Неверный формат: {data}")
-                
-                channel_name = parts[0].strip()
-                time_str = parts[1]
-                
-                # Проверка формата времени
-                if not re.match(r'^\d{1,2}:\d{2}$', time_str):
-                    raise ValueError(f"Неверный формат времени: {time_str}")
-                
-                channels_data.append({
-                    'channel': channel_name,
-                    'time': time_str
-                })
-            
-            # Проверяем валидность данных
-            if day < 1 or day > 31:
-                raise ValueError("День должен быть числом от 1 до 31")
-            
-            valid_colors = ["красный", "желтый", "розовый", "голубой"]
-            if color not in valid_colors:
-                raise ValueError(f"Недопустимый цвет. Используйте: {', '.join(valid_colors)}")
-            
-            current_month = user_states[user_id]['current_month']
-            client = await setup_google_sheets()
-            
-            # Получаем отчет об обновлении
-            report = await update_table_cells(
-                client, 
-                current_month, 
-                day, 
-                color, 
-                text, 
-                channels_data
-            )
-            
-            # После обработки предлагаем выбрать месяц снова
-            user_states[user_id].pop('current_month', None)
-            await message.answer(
-                f"{report}\n\nВыберите месяц для следующей операции:",
-                reply_markup=get_month_keyboard()
-            )
+        # Парсим данные
+        text = lines[0]
+        day = int(lines[1])
+        color = lines[2].lower()
+        channels_data = []
         
+        for data in lines[3:]:
+            parts = data.rsplit(' ', 1)
+            if len(parts) != 2:
+                raise ValueError(f"Неверный формат: {data}")
+            
+            channel_name = parts[0].strip()
+            time_str = parts[1]
+            
+            # Проверка формата времени
+            if not re.match(r'^\d{1,2}:\d{2}$', time_str):
+                raise ValueError(f"Неверный формат времени: {time_str}")
+            
+            channels_data.append({
+                'channel': channel_name,
+                'time': time_str
+            })
+        
+        # Проверяем валидность данных
+        if day < 1 or day > 31:
+            raise ValueError("День должен быть числом от 1 до 31")
+        
+        valid_colors = ["красный", "желтый", "розовый", "голубой"]
+        if color not in valid_colors:
+            raise ValueError(f"Недопустимый цвет. Используйте: {', '.join(valid_colors)}")
+        
+        current_month = user_states[user_id]['current_month']
+        client = await setup_google_sheets()
+        
+        # Получаем отчет об обновлении
+        report = await update_table_cells(
+            client, 
+            current_month, 
+            day, 
+            color, 
+            text, 
+            channels_data
+        )
+        
+        # После обработки предлагаем выбрать месяц снова
+        user_states[user_id].pop('current_month', None)
+        await message.answer(
+            f"{report}\n\nВыберите месяц для следующей операции:",
+            reply_markup=get_month_keyboard(),
+            parse_mode="HTML"
+        )
+    
     except Exception as e:
         logger.error(f"Ошибка обработки данных: {e}")
         await message.answer(f"❌ Ошибка: {str(e)}\n\nПопробуйте отправить данные снова или начните заново с /start")
