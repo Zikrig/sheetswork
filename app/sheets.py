@@ -507,3 +507,116 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
     except Exception as e:
         logger.error(f"Ошибка при обновлении таблицы: {e}")
         raise
+
+
+async def cancel_table_cells(client, target_date, day, channels_data):
+    try:
+        sheet_name = get_sheet_name(target_date)
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        sheet = get_or_create_sheet(spreadsheet, sheet_name)
+        
+        # Для сбора запросов
+        requests = []
+        report_data = []
+        
+        for data in channels_data:
+            channel_name = data['channel']
+            time_str = data['time']
+            entry = {
+                "channel": channel_name,
+                "time": time_str,
+                "status": None,
+                "message": ""
+            }
+            
+            try:
+                channel_idx = CHANNELS.index(channel_name)
+            except ValueError:
+                entry["status"] = "error"
+                entry["message"] = f"Канал '{channel_name}' не найден"
+                report_data.append(entry)
+                continue
+            
+            # Определяем положение таблицы
+            tables_per_row = TABLE_CONFIG['tables_per_row']
+            row_idx = channel_idx // tables_per_row
+            col_idx = channel_idx % tables_per_row
+            
+            table_config = TABLE_CONFIG
+            start_row = 2 + row_idx * (table_config['table_height'] + table_config['v_spacing'])
+            start_col = 1 + col_idx * (table_config['table_width'] + table_config['h_spacing'])
+            
+            # Определяем строку дня
+            row = start_row + day
+            
+            # Определяем смену по времени
+            def get_shift(time_str):
+                try:
+                    hours = int(time_str.split(':')[0])
+                    if 6 <= hours < 12: return 'morning'
+                    elif 12 <= hours < 15: return 'afternoon'
+                    elif 15 <= hours < 18: return 'day'
+                    else: return 'evening'
+                except: return 'evening'
+            
+            shift = get_shift(time_str)
+            shift_columns = {
+                'morning': 2, 'afternoon': 3, 'day': 4, 'evening': 5
+            }
+            col = start_col + shift_columns.get(shift, 5)
+            
+            # Добавляем запрос на очистку ячейки
+            requests.append({
+                'updateCells': {
+                    'range': {
+                        'sheetId': sheet.id,
+                        'startRowIndex': row-1,
+                        'endRowIndex': row,
+                        'startColumnIndex': col-1,
+                        'endColumnIndex': col
+                    },
+                    'rows': [{
+                        'values': [{
+                            'userEnteredValue': {'stringValue': ''},   # пустая строка
+                            'userEnteredFormat': {
+                                'backgroundColor': {'red': 1, 'green': 1, 'blue': 1}  # белый цвет
+                            }
+                        }]
+                    }],
+                    'fields': 'userEnteredValue,userEnteredFormat.backgroundColor'
+                }
+            })
+            
+            entry["status"] = "success"
+            entry["message"] = "Ячейка очищена"
+            report_data.append(entry)
+        
+        # Отправляем запросы
+        if requests:
+            for i in range(0, len(requests), 10):  # Разбиваем на пакеты по 10
+                batch = requests[i:i+10]
+                sheet.spreadsheet.batch_update({'requests': batch})
+                await asyncio.sleep(0.5)  # Короткая задержка
+        
+        # Формируем отчет
+        success_messages = []
+        error_messages = []
+        
+        for entry in report_data:
+            channel_info = f"{entry['channel']} ({entry['time']})"
+            if entry["status"] == "success":
+                success_messages.append(f"✓ {channel_info}: {entry['message']}")
+            elif entry["status"] == "error":
+                error_messages.append(f"⚠ {channel_info}: {entry['message']}")
+                
+        report = ""
+        if success_messages:
+            report += "✅ Успешно:\n" + "\n".join(success_messages) + "\n\n"
+        if error_messages:
+            report += "❌ Ошибки:\n" + "\n".join(error_messages) + "\n\n"
+            
+        return report.strip()
+            
+    except Exception as e:
+        logger.error(f"Ошибка при отмене записи: {e}")
+        raise
