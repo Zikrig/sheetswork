@@ -1,0 +1,16 @@
+[Unit]
+Description=My Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=venv/bin/python3 bot.py
+Restart=always
+RestartSec=5
+Environment="PYTHONUNBUFFERED=1"
+
+# Если используете виртуальное окружение
+# ExecStart=/path/to/venv/bin/python /path/to/your/project/main.py
+
+[Install]
+WantedBy=multi-user.target
