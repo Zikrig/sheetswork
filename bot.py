@@ -245,7 +245,7 @@ async def get_day_data(client, target_date):
                         cell_value = row_data[col - 1]
                         # Проверяем, заполнена ли ячейка
                         if cell_value and cell_value.strip():
-                            status_parts.append(f"{time} ")
+                            status_parts.append(f"")
                         else:
                             status_parts.append(f"{time} ⭕️")
                     else:
