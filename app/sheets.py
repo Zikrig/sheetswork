@@ -324,7 +324,8 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
             "красный": {"red": 1, "green": 0, "blue": 0},
             "желтый": {"red": 1, "green": 1, "blue": 0},
             "розовый": {"red": 1, "green": 0, "blue": 1},
-            "голубой": {"red": 0, "green": 1, "blue": 1}
+            "голубой": {"red": 0, "green": 1, "blue": 1},
+            "зеленый": {"red": 0, "green": 1, "blue": 0}
         }
         color = colors.get(color_name, {"red": 1, "green": 1, "blue": 1})
         
@@ -523,6 +524,9 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         raise
 
 
+# В sheets.py
+
+# Обновим функцию cancel_table_cells
 async def cancel_table_cells(client, target_date, day, channels_data):
     try:
         sheet_name = get_sheet_name(target_date)
@@ -532,6 +536,9 @@ async def cancel_table_cells(client, target_date, day, channels_data):
         # Для сбора запросов
         requests = []
         report_data = []
+        
+        # ЗЕЛЕНЫЙ ЦВЕТ ДЛЯ ОТМЕНЫ
+        green_color = {"red": 0, "green": 1, "blue": 0}
         
         for data in channels_data:
             channel_name = data['channel']
@@ -579,7 +586,7 @@ async def cancel_table_cells(client, target_date, day, channels_data):
             }
             col = start_col + shift_columns.get(shift, 5)
             
-            # Добавляем запрос на очистку ячейки
+            # Добавляем запрос на очистку ячейки И ЗЕЛЕНЫЙ ЦВЕТ
             requests.append({
                 'updateCells': {
                     'range': {
@@ -593,7 +600,7 @@ async def cancel_table_cells(client, target_date, day, channels_data):
                         'values': [{
                             'userEnteredValue': {'stringValue': ''},   # пустая строка
                             'userEnteredFormat': {
-                                'backgroundColor': {'red': 1, 'green': 1, 'blue': 1}  # белый цвет
+                                'backgroundColor': green_color  # ЗЕЛЕНЫЙ ЦВЕТ
                             }
                         }]
                     }],
@@ -602,7 +609,7 @@ async def cancel_table_cells(client, target_date, day, channels_data):
             })
             
             entry["status"] = "success"
-            entry["message"] = "Ячейка очищена"
+            entry["message"] = "Ячейка отменена (зеленая)"
             report_data.append(entry)
         
         # Отправляем запросы
@@ -630,6 +637,11 @@ async def cancel_table_cells(client, target_date, day, channels_data):
                 channel_info = f"<a href='{channel_link}'>{channel_name_escaped}</a> ({time_str_escaped})"
             else:
                 channel_info = f"{channel_name_escaped} ({time_str_escaped})"
+                
+            if entry["status"] == "success":
+                success_messages.append(f"{channel_info}: {entry['message']}")
+            elif entry["status"] == "error":
+                error_messages.append(f"{channel_info}: {entry['message']}")
                 
         report = ""
         if success_messages:

@@ -60,6 +60,73 @@ async def start(message: types.Message):
         )
     )
 
+# В bot.py добавим новый обработчик
+
+@dp.message(F.text.startswith("Отмена"))
+async def handle_cancel_command(message: types.Message):
+    user_id = message.from_user.id
+    
+    if user_id not in user_states or 'current_month' not in user_states[user_id]:
+        await message.answer("Сначала выберите месяц с помощью команды /start")
+        return
+    
+    try:
+        lines = [line.strip() for line in message.text.split('\n') if line.strip()]
+        
+        if len(lines) < 2:
+            raise ValueError("Сообщение отмены должно содержать минимум 2 строки")
+        
+        # Парсим данные
+        if lines[0].lower() != "отмена":
+            raise ValueError("Первая строка должна быть 'Отмена'")
+        
+        day = int(lines[1])
+        channels_data = []
+        
+        for data in lines[2:]:
+            parts = data.rsplit(' ', 1)
+            if len(parts) != 2:
+                raise ValueError(f"Неверный формат: {data}")
+            
+            channel_name = parts[0].strip()
+            time_str = parts[1]
+            
+            # Проверка формата времени
+            if not re.match(r'^\d{1,2}:\d{2}$', time_str):
+                raise ValueError(f"Неверный формат времени: {time_str}")
+            
+            channels_data.append({
+                'channel': channel_name,
+                'time': time_str
+            })
+        
+        # Проверяем валидность данных
+        if day < 1 or day > 31:
+            raise ValueError("День должен быть числом от 1 до 31")
+        
+        current_month = user_states[user_id]['current_month']
+        client = await setup_google_sheets()
+        
+        # Получаем отчет об отмене
+        report = await cancel_table_cells(
+            client, 
+            current_month, 
+            day, 
+            channels_data
+        )
+        
+        # После обработки предлагаем выбрать месяц снова
+        user_states[user_id].pop('current_month', None)
+        await message.answer(
+            f"{report}\n\nВыберите месяц для следующей операции:",
+            reply_markup=get_month_keyboard(),
+            parse_mode="HTML"
+        )
+    
+    except Exception as e:
+        logger.error(f"Ошибка обработки отмены: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}\n\nПопробуйте отправить отмену снова или начните заново с /start")
+
 # Обработчик для обычной клавиатуры
 @dp.message(F.text.in_(["Текущий месяц", "Следующий месяц", "Данные (клавиатура)"]))
 async def handle_keyboard(message: types.Message):
