@@ -430,10 +430,10 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
                 # Получаем значение из кэша
                 current_value = cell_values.get((row, col), "")
                 
-                # Заменяем @ на время в тексте
-                if '@' in text:
+                # Заменяем @@ на время в тексте
+                if '@@' in text:
                     text = html.unescape(text)
-                    formatted_text = text.replace('@', time_str)
+                    formatted_text = text.replace('@@', time_str)
                 else:
                     formatted_text = text
                 
