@@ -355,6 +355,11 @@ async def get_day_data(client, target_date):
                     channel_line.append(time)
                     free_slots_count += 1
             
+            if slot_status["18"]:
+                free_slots_count += 1
+
+            free_slots_count -= 1
+            
             # Добавляем кружки для свободных слотов (только для 9,12,15)
             if free_slots_count > 0:
                 channel_line.append("⭕️" * free_slots_count)
