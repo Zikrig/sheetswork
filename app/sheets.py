@@ -485,7 +485,7 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
         success_messages = []
         skip_messages = []
         error_messages = []
-        
+
         for entry in report_data:
             channel_name = entry['channel']
             time_str = entry['time']
@@ -508,6 +508,7 @@ async def update_table_cells(client, target_date, day, color_name, text, channel
             elif entry["status"] == "error":
                 error_messages.append(f"{channel_info}: {entry['message']}")
         
+
 
         report = ""
         if success_messages:

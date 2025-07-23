@@ -359,7 +359,7 @@ async def get_day_data(client, target_date):
                 free_slots_count += 1
 
             free_slots_count -= 1
-            
+
             # Добавляем кружки для свободных слотов (только для 9,12,15)
             if free_slots_count > 0:
                 channel_line.append("⭕️" * free_slots_count)
@@ -372,12 +372,37 @@ async def get_day_data(client, target_date):
             if len(channel_line) > 1:
                 report_lines.append(" ".join(channel_line))
         
-        return "\n".join(report_lines) if report_lines else "Все каналы заняты"
+        return format_report(report_lines)
         
     except Exception as e:
         logger.error(f"Ошибка при получении данных: {e}")
         return f"Ошибка при получении данных: {str(e)}"
     
+
+def format_report(channel_data):
+    if not channel_data:
+        return "Все каналы заняты"
+    
+    print(channel_data)
+    
+    lines = []
+    for group in CHANNEL_GROUPS:
+        group_lines = []
+        for channel_idx in group:
+            # if channel_idx in channel_data:
+            print(channel_idx, len(channel_data))
+            group_lines.append(channel_data[channel_idx])
+        
+        if group_lines:
+            lines.extend(group_lines)
+            lines.append("")  # Добавляем пустую строку между группами
+
+    # Убираем последнюю пустую строку
+    if lines and lines[-1] == "":
+        lines.pop()
+        
+    return "\n".join(lines)
+
 
 def get_month_keyboard():
     builder = InlineKeyboardBuilder()
